@@ -1,0 +1,83 @@
+version: '3.8'
+
+networks:
+  kafka-net:
+    driver: bridge
+
+services:
+  # Единственный брокер (он же контроллер)
+  kafka-0:
+    image: bitnamilegacy/kafka:latest          # замените на доступный вам тег
+    container_name: kafka-0
+    ports:
+      - "9092:9094"                     # внешний порт для клиентов (localhost:9092)
+    environment:
+      # Режим KRaft
+      - KAFKA_ENABLE_KRAFT=yes
+      - KAFKA_KRAFT_CLUSTER_ID=abcDE12345fGHIJKLmnop   # можно любой уникальный ID
+
+      # Идентификация
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_BROKER_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+
+      # Контроллеры (только этот узел)
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka-0:9093
+
+      # Слушатели: PLAINTEXT (9092) для общения с клиентами и между брокерами,
+      # CONTROLLER (9093) для внутреннего контроллер‑протокола,
+      # EXTERNAL (9094) для доступа с хоста через localhost.
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka-0:9092,EXTERNAL://localhost:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+
+      # Факторы репликации (для одного брокера = 1)
+      - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=1
+
+      # Разрешить PLAINTEXT
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    networks:
+      - kafka-net
+
+  # Продюсеры (спят, чтобы запускать команды)
+  producer-0:
+    image: bitnamilegacy/kafka:latest
+    container_name: producer-0
+    entrypoint: ["tail", "-f", "/dev/null"]
+    networks:
+      - kafka-net
+    depends_on:
+      - kafka-0
+
+  producer-1:
+    image: bitnamilegacy/kafka:latest
+    container_name: producer-1
+    entrypoint: ["tail", "-f", "/dev/null"]
+    networks:
+      - kafka-net
+    depends_on:
+      - kafka-0
+
+  # Консюмеры
+  consumer-0:
+    image: bitnamilegacy/kafka:latest
+    container_name: consumer-0
+    entrypoint: ["tail", "-f", "/dev/null"]
+    networks:
+      - kafka-net
+    depends_on:
+      - kafka-0
+
+  consumer-1:
+    image: bitnamilegacy/kafka:latest
+    container_name: consumer-1
+    entrypoint: ["tail", "-f", "/dev/null"]
+    networks:
+      - kafka-net
+    depends_on:
+      - kafka-0
