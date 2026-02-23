@@ -13,19 +13,19 @@ from kafka.errors import NoBrokersAvailable
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('ml-consumer')
 
-# ---------- Конфигурация из переменных окружения ----------
+# configuration
 BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka-0:9092,kafka-1:9092').split(',')
 INPUT_TOPIC = os.getenv('INPUT_TOPIC', 'ml-input')
 OUTPUT_TOPIC = os.getenv('OUTPUT_TOPIC', 'ml-result')
 GROUP_ID = os.getenv('GROUP_ID', 'ml-group')
 
-WINDOW_SIZE = int(os.getenv('WINDOW_SIZE', '10'))               # размер окна для признаков (лаги)
-MIN_TRAIN_SAMPLES = int(os.getenv('MIN_TRAIN_SAMPLES', '100'))  # мин. точек для первого обучения
-MAX_HISTORY = int(os.getenv('MAX_HISTORY', '500'))              # макс. хранимых точек на тикер
-PREDICTION_STEPS = int(os.getenv('PREDICTION_STEPS', '3'))      # сколько шагов предсказывать
-RETRAIN_EVERY = int(os.getenv('RETRAIN_EVERY', '50'))           # переобучать каждые N новых сообщений
+WINDOW_SIZE = int(os.getenv('WINDOW_SIZE', '10'))
+MIN_TRAIN_SAMPLES = int(os.getenv('MIN_TRAIN_SAMPLES', '100'))
+MAX_HISTORY = int(os.getenv('MAX_HISTORY', '500'))
+PREDICTION_STEPS = int(os.getenv('PREDICTION_STEPS', '3'))
+RETRAIN_EVERY = int(os.getenv('RETRAIN_EVERY', '50'))
 
-# Гиперпараметры LightGBM (можно менять через окружение)
+# Params of LightGBM
 LGB_PARAMS = {
     'n_estimators': int(os.getenv('LGB_N_ESTIMATORS', '100')),
     'max_depth': int(os.getenv('LGB_MAX_DEPTH', '5')),
@@ -38,44 +38,45 @@ LGB_PARAMS = {
     'verbose': -1  # отключаем лишние логи LightGBM
 }
 
-# ---------- Глобальные структуры данных ----------
-price_history = defaultdict(lambda: deque(maxlen=MAX_HISTORY))   # сырые цены
-models = {}                                                      # обученные модели по тикерам
-is_trained = defaultdict(bool)                                   # флаг первого обучения
-msg_count_since_train = defaultdict(int)                         # счётчик сообщений после последнего обучения
+class Producer:
+    def _create_producer(self):
+        for attempt in range(10):
+            try:
+                producer = KafkaProducer(
+                    bootstrap_servers=BOOTSTRAP_SERVERS,
+                    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+                )
+                logger.info("Kafka producer created")
+                return producer
+            except NoBrokersAvailable:
+                logger.warning(f"No brokers available for producer, retrying {attempt+1}/10...")
+                time.sleep(5)
+        raise Exception("Could not create producer after retries")
 
-# ---------- Вспомогательные функции ----------
-def create_consumer():
-    for attempt in range(10):
-        try:
-            consumer = KafkaConsumer(
-                INPUT_TOPIC,
-                bootstrap_servers=BOOTSTRAP_SERVERS,
-                group_id=GROUP_ID,
-                auto_offset_reset='latest',
-                enable_auto_commit=True,
-                value_deserializer=lambda m: json.loads(m.decode('utf-8'))
-            )
-            logger.info("Kafka consumer created")
-            return consumer
-        except NoBrokersAvailable:
-            logger.warning(f"No brokers available, retrying {attempt+1}/10...")
-            time.sleep(5)
-    raise Exception("Could not create consumer after retries")
+    def __init__(self):
+        self.kafka = self._create_producer()
 
-def create_producer():
-    for attempt in range(10):
-        try:
-            producer = KafkaProducer(
-                bootstrap_servers=BOOTSTRAP_SERVERS,
-                value_serializer=lambda v: json.dumps(v).encode('utf-8')
-            )
-            logger.info("Kafka producer created")
-            return producer
-        except NoBrokersAvailable:
-            logger.warning(f"No brokers available for producer, retrying {attempt+1}/10...")
-            time.sleep(5)
-    raise Exception("Could not create producer after retries")
+class Consumer:
+    def _create_consumer(self):
+        for attempt in range(10):
+            try:
+                consumer = KafkaConsumer(
+                    INPUT_TOPIC,
+                    bootstrap_servers=BOOTSTRAP_SERVERS,
+                    group_id=GROUP_ID,
+                    auto_offset_reset='latest',
+                    enable_auto_commit=True,
+                    value_deserializer=lambda m: json.loads(m.decode('utf-8'))
+                )
+                logger.info("Kafka consumer created")
+                return consumer
+            except NoBrokersAvailable:
+                logger.warning(f"No brokers available, retrying {attempt+1}/10...")
+                time.sleep(5)
+        raise Exception("Could not create consumer after retries")
+
+    def __init__(self):
+        self.kafka = self._create_consumer()
 
 def extract_features(prices_window):
     """
@@ -100,7 +101,7 @@ def extract_features(prices_window):
         features.extend([0.0, 0.0])
     return np.array(features)
 
-def prepare_training_data(ticker):
+def prepare_training_data(ticker, price_history):
     """
     По истории цен для тикера формирует матрицу X (признаки для каждого окна)
     и вектор y (целевые значения – следующая цена).
@@ -117,9 +118,9 @@ def prepare_training_data(ticker):
         y.append(history[i])
     return np.array(X), np.array(y)
 
-def train_model(ticker):
+def train_model(ticker, price_history):
     """Обучает модель LightGBM для указанного тикера на всех доступных данных."""
-    X, y = prepare_training_data(ticker)
+    X, y = prepare_training_data(ticker, price_history)
     if X is None or len(X) == 0:
         logger.warning(f"Not enough data to train model for {ticker}")
         return None
@@ -128,7 +129,7 @@ def train_model(ticker):
     logger.info(f"Trained LightGBM for {ticker} on {len(X)} samples")
     return model
 
-def predict_multi_step(ticker, steps=PREDICTION_STEPS):
+def predict_multi_step(ticker, models, price_history, steps=PREDICTION_STEPS):
     """Предсказывает следующие steps значений цены для тикера рекурсивно."""
     if ticker not in models:
         return None
@@ -148,14 +149,18 @@ def predict_multi_step(ticker, steps=PREDICTION_STEPS):
         current_window.append(pred)
     return predictions
 
-# ---------- Основной цикл ----------
 def main():
     logger.info(f"Starting ML consumer with LightGBM, steps={PREDICTION_STEPS}, retrain_every={RETRAIN_EVERY}")
-    consumer = create_consumer()
-    producer = create_producer()
+
+    price_history = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
+    models = {}
+    is_trained = defaultdict(bool)
+    msg_count_since_train = defaultdict(int) 
 
     try:
-        for msg in consumer:
+        consumer = Consumer()
+        producer = Producer()
+        for msg in consumer.kafka:
             data = msg.value
             ticker = data.get('ticker')
             close_price = data.get('close_price')
@@ -168,37 +173,35 @@ def main():
                 logger.warning(f"Invalid close_price: {close_price}")
                 continue
 
-            # Сохраняем цену в историю
             price_history[ticker].append(close_price)
             logger.debug(f"Received {ticker}: {close_price}")
 
-            # --- Обучение / переобучение ---
+            # Training
             if not is_trained[ticker]:
-                # Первое обучение
+                # first train
                 if len(price_history[ticker]) >= MIN_TRAIN_SAMPLES:
-                    model = train_model(ticker)
+                    model = train_model(ticker, price_history)
                     if model:
                         models[ticker] = model
                         is_trained[ticker] = True
                         msg_count_since_train[ticker] = 0
                         logger.info(f"First model trained for {ticker}")
             else:
-                # Модель уже есть – считаем сообщения и при необходимости переобучаем
+                # Retraining
                 msg_count_since_train[ticker] += 1
                 if msg_count_since_train[ticker] >= RETRAIN_EVERY:
                     logger.info(f"Retraining model for {ticker} after {RETRAIN_EVERY} messages")
-                    new_model = train_model(ticker)
+                    new_model = train_model(ticker, price_history)
                     if new_model:
                         models[ticker] = new_model
                         msg_count_since_train[ticker] = 0
                         logger.info(f"Model retrained for {ticker}")
                     else:
-                        # Если не удалось переобучить (недостаточно данных), сбрасывать счётчик не будем
                         logger.warning(f"Retraining failed for {ticker}, will retry later")
 
-            # --- Предсказание (если модель обучена) ---
+            # Prediction
             if is_trained[ticker]:
-                predictions = predict_multi_step(ticker)
+                predictions = predict_multi_step(ticker, models, price_history)
                 if predictions:
                     logger.info(f"🔮 Predictions for {ticker}: {[round(p,2) for p in predictions]}")
                     result_message = {
@@ -207,7 +210,7 @@ def main():
                         'steps': PREDICTION_STEPS,
                         'timestamp': time.time()
                     }
-                    producer.send(OUTPUT_TOPIC, value=result_message)
+                    producer.kafka.send(OUTPUT_TOPIC, value=result_message)
 
     except KeyboardInterrupt:
         logger.info("Shutting down...")
