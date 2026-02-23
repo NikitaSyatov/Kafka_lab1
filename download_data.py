@@ -1,7 +1,15 @@
 try:
     import kagglehub
 except ModuleNotFoundError:
-    print("Module kagglehub not found. Please use command for install: pip install kagglehub")
+    print("Module kagglehub not found. Please install - pip install kagglehub")
+
+import shutil
+import os
+
+# Скачиваем датасет и получаем путь
+downloaded_path = kagglehub.dataset_download("jacksoncrow/stock-market-dataset")
+print("Dataset downloaded to:", downloaded_path)
+
 target_dir = "./data"
 os.makedirs(target_dir, exist_ok=True)
 
