@@ -1,7 +1,7 @@
 echo "-----RUNNER KAFKA-----"
 
-# echo "First phase: download stock market dataset"
-# python3 download_data.py
+echo "First phase: download stock market dataset"
+python3 download_data.py
 
 echo "Second phase: build and run kafka server"
 docker-compose up -d
