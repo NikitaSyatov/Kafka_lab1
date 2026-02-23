@@ -21,22 +21,22 @@ services:
     ports:
       - "9092:9092"
     environment:
-      # Отключаем KRaft, включаем Zookeeper
+      # Disable KRaft
       - KAFKA_ENABLE_KRAFT=false
       - KAFKA_SKIP_KRAFT_STORAGE_INIT=true
-      # Идентификация
+
       - KAFKA_CFG_BROKER_ID=0
       - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
-      # Слушатели
+
       - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
       - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka-0:9092
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
-      # Репликация
+
       - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=2
       - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=2
       - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=2
       - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=2
-      # Разрешаем PLAINTEXT
+
       - ALLOW_PLAINTEXT_LISTENER=yes
     depends_on:
       - zookeeper
@@ -47,19 +47,23 @@ services:
     image: bitnamilegacy/kafka:3.6.0
     container_name: kafka-1
     ports:
-      - "9093:9092"   # внешний порт 9093
+      - "9093:9092"
     environment:
       - KAFKA_ENABLE_KRAFT=false
       - KAFKA_SKIP_KRAFT_STORAGE_INIT=true
+
       - KAFKA_CFG_BROKER_ID=1
       - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+
       - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
       - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka-1:9092
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+
       - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=2
       - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=2
       - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=2
       - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=2
+
       - ALLOW_PLAINTEXT_LISTENER=yes
     depends_on:
       - zookeeper
@@ -71,12 +75,14 @@ services:
     build: ./producer
     container_name: producer-0
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
-      KAFKA_TOPIC: stock-market
-      DATA_PATH: /data
-      DELAY_MIN: 0.1
-      DELAY_MAX: 0.5
-      CLIENT_ID: producer-0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-0:9092,kafka-1:9092
+      - KAFKA_TOPIC=stock-market
+      - DATA_PATH=/data
+
+      - DELAY_MIN=0.1
+      - DELAY_MAX=0.5
+
+      - CLIENT_ID=producer-0
     volumes:
       - ./data:/data
     depends_on:
@@ -91,12 +97,14 @@ services:
     build: ./producer
     container_name: producer-1
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
-      KAFKA_TOPIC: stock-market
-      DATA_PATH: /data
-      DELAY_MIN: 0.1
-      DELAY_MAX: 0.5
-      CLIENT_ID: producer-1
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-0:9092,kafka-1:9092
+      - KAFKA_TOPIC=stock-market
+      - DATA_PATH=/data
+
+      - DELAY_MIN=0.1
+      - DELAY_MAX=0.5
+
+      - CLIENT_ID=producer-1
     volumes:
       - ./data:/data
     depends_on:
@@ -111,12 +119,12 @@ services:
     build: ./consumer_data_processing
     container_name: consumer-0
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
-      KAFKA_TOPIC: stock-market
-      KAFKA_GROUP_ID: data-processor-group
-      WINDOW_SIZE: 10
-      ML_TOPIC: ml-input
-      ML_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-0:9092,kafka-1:9092
+      - KAFKA_TOPIC=stock-market
+      - KAFKA_GROUP_ID=data-processor-group
+      - WINDOW_SIZE=10
+      - ML_TOPIC=ml-input
+      - ML_BOOTSTRAP_SERVERS=kafka-0:9092,kafka-1:9092
     depends_on:
       - kafka-0
       - kafka-1
@@ -129,22 +137,22 @@ services:
     build: ./consumer_ml
     container_name: ml-consumer
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
-      INPUT_TOPIC: ml-input
-      OUTPUT_TOPIC: ml-result
-      GROUP_ID: ml-group
-      WINDOW_SIZE: 10
-      MIN_TRAIN_SAMPLES: 50
-      MAX_HISTORY: 500
-      PREDICTION_STEPS: 3
-      RETRAIN_EVERY: 50
-      # Гиперпараметры LightGBM (можно не указывать, используются значения по умолчанию)
-      LGB_N_ESTIMATORS: 100
-      LGB_MAX_DEPTH: 5
-      LGB_LEARNING_RATE: 0.1
-      LGB_SUBSAMPLE: 0.8
-      LGB_COLSAMPLE_BYTREE: 0.8
-      LGB_NUM_LEAVES: 31
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-0:9092,kafka-1:9092
+      - INPUT_TOPIC=ml-input
+      - OUTPUT_TOPIC=ml-result
+      - GROUP_ID=ml-group
+      - WINDOW_SIZE=10
+      - MIN_TRAIN_SAMPLES=50
+      - MAX_HISTORY=500
+      - PREDICTION_STEPS=3
+      - RETRAIN_EVERY=50
+      # Params LightGBM
+      - LGB_N_ESTIMATORS=100
+      - LGB_MAX_DEPTH=5
+      - LGB_LEARNING_RATE=0.1
+      - LGB_SUBSAMPLE=0.8
+      - LGB_COLSAMPLE_BYTREE=0.8
+      - LGB_NUM_LEAVES=31
     depends_on:
       - kafka-0
       - kafka-1
@@ -159,10 +167,10 @@ services:
     ports:
       - "8501:8501"
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
-      KAFKA_TOPIC: stock-market
-      ML_TOPIC: ml-result
-      KAFKA_GROUP_ID: visualizer-group
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-0:9092,kafka-1:9092
+      - KAFKA_TOPIC=stock-market
+      - ML_TOPIC=ml-result
+      - KAFKA_GROUP_ID=visualizer-group
     depends_on:
       - kafka-0
       - kafka-1

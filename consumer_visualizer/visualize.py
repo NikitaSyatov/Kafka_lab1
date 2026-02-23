@@ -11,15 +11,15 @@ from streamlit_autorefresh import st_autorefresh
 import numpy as np
 from sklearn.metrics import r2_score
 
-# ---------- Конфигурация ----------
+# configuration
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka-0:9092,kafka-1:9092").split(",")
 STOCK_TOPIC = os.getenv("KAFKA_TOPIC", "stock-market")
 ML_TOPIC = os.getenv("ML_TOPIC", "ml-result")
 GROUP_ID = os.getenv("KAFKA_GROUP_ID", "visualizer-group")
 MAX_POINTS = 200
-WINDOW_R2 = 30  # размер окна для скользящего R²
+WINDOW_R2 = 30
 
-# Инициализация состояния
+# Init status
 if 'price_history' not in st.session_state:
     st.session_state.price_history = defaultdict(lambda: deque(maxlen=MAX_POINTS))
     st.session_state.counter = defaultdict(int)
@@ -45,18 +45,15 @@ if 'consumer' not in st.session_state:
     )
     st.session_state.consumer.poll(timeout_ms=1000)
 
-# Автообновление каждые 2 секунды
 st_autorefresh(interval=2000, key="auto_refresh")
 
-st.title("📈 Stock Market with Prediction Accuracy")
+st.title("Prediction Stock Marcket prices in real time")
 st.markdown("Real-time data from Kafka: **stock-market** (prices) and **ml-result** (predictions)")
 
-# ---------- Чтение сообщений из Kafka ----------
 messages = st.session_state.consumer.poll(timeout_ms=500)
 new_data = False
 
 def update_r2(ticker):
-    """Обновляет историю R² для тикера на основе последних пар."""
     pairs = st.session_state.actual_vs_pred[ticker]
     if len(pairs) < 2:
         return
@@ -109,7 +106,7 @@ for tp, records in messages.items():
 if new_data:
     st.session_state.last_update = time.time()
 
-# ---------- Выбор тикера ----------
+# ticker selector
 all_tickers = set(st.session_state.price_history.keys()) | set(st.session_state.prediction_history.keys())
 tickers = sorted(list(all_tickers))
 if not tickers:
@@ -118,7 +115,7 @@ if not tickers:
 
 selected_ticker = st.selectbox("Select ticker", tickers)
 
-# ---------- Основной график (цены и предсказания) ----------
+# Prices and predictions figure
 fig1 = go.Figure()
 
 real_history = list(st.session_state.price_history.get(selected_ticker, []))
@@ -152,7 +149,7 @@ fig1.update_layout(
 )
 st.plotly_chart(fig1, use_container_width=True)
 
-# ---------- График точности (R² скользящее окно) ----------
+# Accuracy figure
 if st.session_state.accuracy_history[selected_ticker]:
     df_acc = pd.DataFrame(st.session_state.accuracy_history[selected_ticker], columns=["index", "r2"])
     fig_acc = go.Figure()
@@ -172,7 +169,6 @@ if st.session_state.accuracy_history[selected_ticker]:
     )
     st.plotly_chart(fig_acc, use_container_width=True)
 
-    # Дополнительная метрика: средний R² за всё время
     overall_r2 = r2_score(
         [p[0] for p in st.session_state.actual_vs_pred[selected_ticker]],
         [p[1] for p in st.session_state.actual_vs_pred[selected_ticker]]
@@ -181,7 +177,6 @@ if st.session_state.accuracy_history[selected_ticker]:
 else:
     st.info("Not enough data to calculate accuracy yet. Waiting for matched predictions...")
 
-# ---------- Метрики текущего состояния ----------
 col1, col2 = st.columns(2)
 with col1:
     if real_history:
@@ -196,7 +191,7 @@ with col2:
     else:
         st.metric("Latest prediction", "N/A")
 
-# ---------- Таблицы ----------
+# Tables
 if real_history:
     st.subheader("Recent historical prices")
     df_real_tail = pd.DataFrame(real_history[-10:], columns=["index", "price"])
