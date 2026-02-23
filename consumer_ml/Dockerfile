@@ -1,5 +1,8 @@
 FROM python:3.9-slim
-RUN pip install kafka-python numpy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install kafka-python numpy scikit-learn lightgbm
 WORKDIR /app
-COPY ml_consumer.py .
-ENTRYPOINT ["python", "-u", "ml_consumer.py"]
+COPY consumer_ml.py .
+ENTRYPOINT ["python", "-u", "consumer_ml.py"]

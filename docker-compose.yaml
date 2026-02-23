@@ -5,55 +5,68 @@ networks:
     driver: bridge
 
 services:
-  # Zookeeper (обязателен для классического режима)
   zookeeper:
-    image: zookeeper:3.8
+    image: bitnamilegacy/zookeeper:3.9
     container_name: zookeeper
     ports:
       - "2181:2181"
     environment:
-      ZOO_MY_ID: 1
-      ZOO_SERVERS: server.1=zookeeper:2888:3888;2181
+      - ALLOW_ANONYMOUS_LOGIN=yes
     networks:
       - kafka-net
 
-  # Первый брокер Kafka
   kafka-0:
-    image: apache/kafka:3.7.0
+    image: bitnamilegacy/kafka:3.6.0
     container_name: kafka-0
     ports:
       - "9092:9092"
     environment:
-      KAFKA_BROKER_ID: 0
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-0:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      # Отключаем KRaft, включаем Zookeeper
+      - KAFKA_ENABLE_KRAFT=false
+      - KAFKA_SKIP_KRAFT_STORAGE_INIT=true
+      # Идентификация
+      - KAFKA_CFG_BROKER_ID=0
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      # Слушатели
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka-0:9092
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      # Репликация
+      - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=2
+      - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=2
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=2
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=2
+      # Разрешаем PLAINTEXT
+      - ALLOW_PLAINTEXT_LISTENER=yes
     depends_on:
       - zookeeper
     networks:
       - kafka-net
 
-  # Второй брокер Kafka
   kafka-1:
-    image: apache/kafka:3.7.0
+    image: bitnamilegacy/kafka:3.6.0
     container_name: kafka-1
     ports:
-      - "9093:9092"
+      - "9093:9092"   # внешний порт 9093
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      - KAFKA_ENABLE_KRAFT=false
+      - KAFKA_SKIP_KRAFT_STORAGE_INIT=true
+      - KAFKA_CFG_BROKER_ID=1
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka-1:9092
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=2
+      - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=2
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=2
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=2
+      - ALLOW_PLAINTEXT_LISTENER=yes
     depends_on:
       - zookeeper
     networks:
       - kafka-net
 
-  # Продюсер 0 (читает CSV из ./data)
+  # Продюсер 0
   producer-0:
     build: ./producer
     container_name: producer-0
@@ -61,8 +74,8 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
       KAFKA_TOPIC: stock-market
       DATA_PATH: /data
-      DELAY_MIN: 1
-      DELAY_MAX: 5
+      DELAY_MIN: 0.1
+      DELAY_MAX: 0.5
       CLIENT_ID: producer-0
     volumes:
       - ./data:/data
@@ -81,8 +94,8 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
       KAFKA_TOPIC: stock-market
       DATA_PATH: /data
-      DELAY_MIN: 2
-      DELAY_MAX: 6
+      DELAY_MIN: 0.1
+      DELAY_MAX: 0.5
       CLIENT_ID: producer-1
     volumes:
       - ./data:/data
@@ -93,9 +106,9 @@ services:
       - kafka-net
     restart: unless-stopped
 
-  # Data Processing Consumer (consumer-0) – читает stock-market, пишет в ml-input
+  # Data Processing Consumer (consumer-0)
   consumer-0:
-    build: ./consumer_processor
+    build: ./consumer_data_processing
     container_name: consumer-0
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
@@ -103,7 +116,7 @@ services:
       KAFKA_GROUP_ID: data-processor-group
       WINDOW_SIZE: 10
       ML_TOPIC: ml-input
-      ML_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092   # пишем в оба брокера
+      ML_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
     depends_on:
       - kafka-0
       - kafka-1
@@ -111,9 +124,9 @@ services:
       - kafka-net
     restart: unless-stopped
 
-  # ML Consumer – читает ml-input, предсказывает, пишет в ml-result
+  # ML Consumer
   ml-consumer:
-    build: ./ml_consumer
+    build: ./consumer_ml
     container_name: ml-consumer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
@@ -121,6 +134,17 @@ services:
       OUTPUT_TOPIC: ml-result
       GROUP_ID: ml-group
       WINDOW_SIZE: 10
+      MIN_TRAIN_SAMPLES: 50
+      MAX_HISTORY: 500
+      PREDICTION_STEPS: 3
+      RETRAIN_EVERY: 50
+      # Гиперпараметры LightGBM (можно не указывать, используются значения по умолчанию)
+      LGB_N_ESTIMATORS: 100
+      LGB_MAX_DEPTH: 5
+      LGB_LEARNING_RATE: 0.1
+      LGB_SUBSAMPLE: 0.8
+      LGB_COLSAMPLE_BYTREE: 0.8
+      LGB_NUM_LEAVES: 31
     depends_on:
       - kafka-0
       - kafka-1
@@ -128,7 +152,7 @@ services:
       - kafka-net
     restart: unless-stopped
 
-  # Visualizer Consumer (consumer-1) – читает stock-market для графиков
+  # Visualizer Consumer (consumer-1)
   consumer-1:
     build: ./consumer_visualizer
     container_name: consumer-1
@@ -137,6 +161,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092
       KAFKA_TOPIC: stock-market
+      ML_TOPIC: ml-result
       KAFKA_GROUP_ID: visualizer-group
     depends_on:
       - kafka-0

@@ -1,6 +1,6 @@
 FROM python:3.9-slim
 
-RUN pip install streamlit kafka-python pandas plotly streamlit-autorefresh
+RUN pip install streamlit kafka-python pandas plotly streamlit-autorefresh scikit-learn
 
 WORKDIR /app
 COPY visualize.py .
